@@ -16,16 +16,14 @@ impl ToolInterfaceCache {
     fn get(&self, tool_name: &str) -> Option<String> {
         self.entries
             .read()
-            .expect("tool interface cache lock")
-            .get(tool_name)
-            .cloned()
+            .ok()
+            .and_then(|guard| guard.get(tool_name).cloned())
     }
 
     fn insert(&self, tool_name: &str, interface: String) {
-        self.entries
-            .write()
-            .expect("tool interface cache lock")
-            .insert(tool_name.to_string(), interface);
+        if let Ok(mut guard) = self.entries.write() {
+            guard.insert(tool_name.to_string(), interface);
+        }
     }
 }
 
@@ -167,20 +165,35 @@ fn escape_comment(text: &str) -> String {
     text.replace("*/", "*\\/").replace('\n', " ")
 }
 
+fn extract_required_set(schema: &JsonSchema) -> Vec<String> {
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|val| val.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn format_enum_value(val: &Value) -> String {
+    match val {
+        Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string()),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        _ => "".to_string(),
+    }
+}
+
 fn json_schema_to_object_content(schema: &JsonSchema) -> String {
     if schema.get("type").and_then(Value::as_str) != Some("object") {
         return "    [key: string]: any;".to_string();
     }
 
     let properties = schema.get("properties").and_then(Value::as_object);
-    let required = schema.get("required").and_then(Value::as_array);
-    let required_set: Vec<String> = required
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|val| val.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let required_set = extract_required_set(schema);
 
     let mut lines = Vec::new();
     if let Some(props) = properties {
@@ -239,18 +252,10 @@ fn object_schema_to_typescript(schema: &JsonSchema, type_name: &str) -> String {
         return format!("interface {type_name} {{\n  [key: string]: any;\n}}");
     }
 
-    let required = schema.get("required").and_then(Value::as_array);
-    let required_set: Vec<String> = required
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|val| val.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-
+    let required_set = extract_required_set(schema);
     let props = properties
-        .unwrap()
         .iter()
+        .flat_map(|props| props.iter())
         .map(|(key, prop_schema)| {
             let is_required = required_set.iter().any(|req| req == key);
             let optional = if is_required { "" } else { "?" };
@@ -291,13 +296,7 @@ fn primitive_schema_to_typescript(schema: &JsonSchema, type_name: &str, base_typ
     if let Some(Value::Array(values)) = schema.get("enum") {
         let union = values
             .iter()
-            .map(|val| match val {
-                Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string()),
-                Value::Number(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                Value::Null => "null".to_string(),
-                _ => "".to_string(),
-            })
+            .map(format_enum_value)
             .filter(|s| !s.is_empty())
             .collect::<Vec<String>>()
             .join(" | ");
@@ -311,13 +310,7 @@ fn json_schema_to_typescript_type(schema: &JsonSchema) -> String {
     if let Some(Value::Array(values)) = schema.get("enum") {
         let union = values
             .iter()
-            .map(|val| match val {
-                Value::String(s) => serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string()),
-                Value::Number(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                Value::Null => "null".to_string(),
-                _ => "".to_string(),
-            })
+            .map(format_enum_value)
             .filter(|s| !s.is_empty())
             .collect::<Vec<String>>()
             .join(" | ");
@@ -331,18 +324,11 @@ fn json_schema_to_typescript_type(schema: &JsonSchema) -> String {
                 return "{ [key: string]: any }".to_string();
             }
 
-            let required = schema.get("required").and_then(Value::as_array);
-            let required_set: Vec<String> = required
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|val| val.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let required_set = extract_required_set(schema);
 
             let props = properties
-                .unwrap()
                 .iter()
+                .flat_map(|props| props.iter())
                 .map(|(key, prop_schema)| {
                     let is_required = required_set.iter().any(|req| req == key);
                     let optional = if is_required { "" } else { "?" };

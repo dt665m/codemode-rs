@@ -1,10 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use derive_builder::Builder;
 use serde_json::Value;
 use tracing::{debug, trace};
-
-use std::collections::HashMap;
 
 use crate::sandbox::{ExecutionResult, Sandbox, SandboxConfig, SandboxError};
 use crate::tool::{AsyncToolCaller, SyncToolCaller, Tool, ToolCallError, ToolMetadataProvider};
@@ -43,17 +42,13 @@ impl CodeModeClient {
         }
     }
 
-    pub fn get_tool(&self, name: &str) -> Option<Tool> {
+    pub fn get_tool(&self, name: &str) -> Option<&Tool> {
         trace!(tool = name, "codemode get_tool");
-        self.callers.get(name).map(|entry| entry.tool.clone())
+        self.callers.get(name).map(|entry| &entry.tool)
     }
 
-    pub fn get_tools(&self) -> Vec<Tool> {
-        let tools = self
-            .callers
-            .values()
-            .map(|entry| entry.tool.clone())
-            .collect::<Vec<Tool>>();
+    pub fn get_tools(&self) -> Vec<&Tool> {
+        let tools: Vec<&Tool> = self.callers.values().map(|entry| &entry.tool).collect();
         trace!(count = tools.len(), "codemode get_tools");
         tools
     }
@@ -65,13 +60,14 @@ impl CodeModeClient {
         caller: Arc<dyn AsyncToolCaller>,
     ) {
         tool.is_async = true;
+        let name = tool.name.clone();
         let entry = ToolCallerEntry {
-            tool: tool.clone(),
+            tool,
             raw_name,
             caller: CallerKind::Async(caller),
         };
-        if self.callers.insert(tool.name.clone(), entry).is_some() {
-            trace!(tool = tool.name.as_str(), "tool caller overwritten");
+        if self.callers.insert(name.clone(), entry).is_some() {
+            trace!(tool = name.as_str(), "tool caller overwritten");
         }
     }
 
@@ -100,13 +96,14 @@ impl CodeModeClient {
         caller: Arc<dyn SyncToolCaller>,
     ) {
         tool.is_async = false;
+        let name = tool.name.clone();
         let entry = ToolCallerEntry {
-            tool: tool.clone(),
+            tool,
             raw_name,
             caller: CallerKind::Sync(caller),
         };
-        if self.callers.insert(tool.name.clone(), entry).is_some() {
-            trace!(tool = tool.name.as_str(), "tool caller overwritten");
+        if self.callers.insert(name.clone(), entry).is_some() {
+            trace!(tool = name.as_str(), "tool caller overwritten");
         }
     }
 
@@ -160,11 +157,10 @@ impl CodeModeClient {
             "codemode call_tool_chain"
         );
         let sandbox = &self.sandbox;
-        let callers = self.callers.clone();
         let interface_generator = &self.interface_generator;
         let code = code.to_string();
         let result = tokio::task::block_in_place(|| {
-            sandbox.execute(&code, &tools, interface_generator, &callers)
+            sandbox.execute(&code, &tools, interface_generator, &self.callers)
         })?;
         debug!(
             result = %format_value(&result.result),

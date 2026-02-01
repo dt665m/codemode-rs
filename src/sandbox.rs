@@ -70,7 +70,7 @@ impl Sandbox {
     pub fn execute(
         &self,
         code: &str,
-        tools: &[Tool],
+        tools: &[&Tool],
         interface_generator: &ToolInterfaceGenerator,
         callers: &HashMap<String, crate::client::ToolCallerEntry>,
     ) -> Result<ExecutionResult, SandboxError> {
@@ -120,7 +120,7 @@ impl Sandbox {
 fn inject_tools<'a>(
     scope: &mut v8::PinScope<'a, '_>,
     global: v8::Local<'a, v8::Object>,
-    tools: &[Tool],
+    tools: &[&Tool],
     interface_generator: &ToolInterfaceGenerator,
     callers: &HashMap<String, crate::client::ToolCallerEntry>,
     runtime_handle: tokio::runtime::Handle,
@@ -136,7 +136,7 @@ fn inject_tools<'a>(
 
         let mut target = global;
         for part in &parts[..parts.len() - 1] {
-            target = ensure_namespace(scope, target, part);
+            target = ensure_namespace(scope, target, part)?;
         }
 
         let caller_entry = callers.get(&tool.name);
@@ -168,7 +168,8 @@ fn inject_tools<'a>(
             .data(tool_external.into())
             .build(scope)
             .ok_or_else(|| SandboxError::V8("tool function".to_string()))?;
-        let fn_key = v8::String::new(scope, parts[parts.len() - 1]).unwrap();
+        let fn_key = v8::String::new(scope, parts[parts.len() - 1])
+            .ok_or_else(|| SandboxError::V8("tool name string".to_string()))?;
         target.set(scope, fn_key.into(), tool_fn.into());
         state.tool_states.push(tool_state);
     }
@@ -200,6 +201,8 @@ impl SandboxState {
     }
 
     fn shared_ptr(&self) -> *const AsyncSharedState {
+        // SAFETY: This pointer is valid as long as SandboxState is alive.
+        // The pointer is only used during sandbox execution and never stored beyond that.
         &*self.shared as *const AsyncSharedState
     }
 }
@@ -297,13 +300,13 @@ fn apply_completion(
     shared: *const AsyncSharedState,
     completion: Completion,
 ) -> Result<(), SandboxError> {
+    // SAFETY: The shared pointer is valid as long as SandboxState is alive.
+    // This function is only called during sandbox execution while the state exists.
     let shared = unsafe { &*shared };
-    let resolver = shared.resolvers.borrow_mut().remove(&completion.id);
-    if resolver.is_none() {
+    let Some(resolver) = shared.resolvers.borrow_mut().remove(&completion.id) else {
         return Ok(());
-    }
+    };
     shared.pending.set(shared.pending.get().saturating_sub(1));
-    let resolver = resolver.unwrap();
     let resolver = v8::Local::new(scope, &resolver);
 
     match completion.result {
@@ -363,6 +366,8 @@ fn tool_callback(
     if state_ptr.is_null() {
         return;
     }
+    // SAFETY: The state pointer points to a Box<ToolCallbackState> stored in SandboxState.tool_states.
+    // It remains valid for the entire duration of sandbox execution.
     let state = unsafe { &*state_ptr };
     let args_value = args.get(0);
     let args_json = v8::json::stringify(scope, args_value)
@@ -372,6 +377,7 @@ fn tool_callback(
     trace!(tool = state.tool_name.as_str(), args = %format_value(&parsed_args), "sandbox call_tool");
 
     if state.is_async {
+        // SAFETY: state.shared points to AsyncSharedState which is valid as long as SandboxState is alive.
         let shared = unsafe { &*state.shared };
         let resolver = match v8::PromiseResolver::new(scope) {
             Some(resolver) => resolver,
@@ -435,16 +441,17 @@ fn ensure_namespace<'a>(
     scope: &mut v8::PinScope<'a, '_>,
     parent: v8::Local<'a, v8::Object>,
     name: &str,
-) -> v8::Local<'a, v8::Object> {
-    let key = v8::String::new(scope, name).unwrap();
+) -> Result<v8::Local<'a, v8::Object>, SandboxError> {
+    let key = v8::String::new(scope, name)
+        .ok_or_else(|| SandboxError::V8(format!("namespace key '{name}'")))?;
     if let Some(existing) = parent.get(scope, key.into()) {
         if existing.is_object() {
-            return existing.to_object(scope).unwrap();
+            return existing.to_object(scope).ok_or_else(|| SandboxError::V8("namespace object".to_string()));
         }
     }
     let obj = v8::Object::new(scope);
     parent.set(scope, key.into(), obj.into());
-    obj
+    Ok(obj)
 }
 
 fn v8_value_to_json(

@@ -1,6 +1,6 @@
 [package]
 name = "codemode-rs"
-description = "Short description"
+description = "A secure V8 JavaScript sandbox with MCP (Model Context Protocol) tool integration"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dt665m/codemode-rs"
