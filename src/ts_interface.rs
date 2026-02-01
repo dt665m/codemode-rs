@@ -27,16 +27,9 @@ impl ToolInterfaceCache {
     }
 }
 
+#[derive(Default)]
 pub struct ToolInterfaceGenerator {
     cache: ToolInterfaceCache,
-}
-
-impl Default for ToolInterfaceGenerator {
-    fn default() -> Self {
-        Self {
-            cache: ToolInterfaceCache::default(),
-        }
-    }
 }
 
 impl ToolInterfaceGenerator {

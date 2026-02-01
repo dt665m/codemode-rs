@@ -77,7 +77,7 @@ impl Sandbox {
         init_v8();
         let mut isolate = v8::Isolate::new(
             v8::CreateParams::default()
-                .heap_limits(0, (self.config.max_heap_mb as usize) * 1024 * 1024),
+                .heap_limits(0, self.config.max_heap_mb * 1024 * 1024),
         );
         let scope = std::pin::pin!(v8::HandleScope::new(&mut isolate));
         let scope = &mut scope.init();
@@ -117,6 +117,7 @@ impl Sandbox {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn inject_tools<'a>(
     scope: &mut v8::PinScope<'a, '_>,
     global: v8::Local<'a, v8::Object>,
@@ -187,7 +188,9 @@ struct ToolCallbackState {
     is_async: bool,
 }
 
+#[allow(clippy::vec_box)]
 struct SandboxState {
+    // Box is required here for stable heap addresses - V8 callbacks hold pointers to these
     tool_states: Vec<Box<ToolCallbackState>>,
     shared: Box<AsyncSharedState>,
 }
@@ -444,10 +447,12 @@ fn ensure_namespace<'a>(
 ) -> Result<v8::Local<'a, v8::Object>, SandboxError> {
     let key = v8::String::new(scope, name)
         .ok_or_else(|| SandboxError::V8(format!("namespace key '{name}'")))?;
-    if let Some(existing) = parent.get(scope, key.into()) {
-        if existing.is_object() {
-            return existing.to_object(scope).ok_or_else(|| SandboxError::V8("namespace object".to_string()));
-        }
+    if let Some(existing) = parent.get(scope, key.into())
+        && existing.is_object()
+    {
+        return existing
+            .to_object(scope)
+            .ok_or_else(|| SandboxError::V8("namespace object".to_string()));
     }
     let obj = v8::Object::new(scope);
     parent.set(scope, key.into(), obj.into());
