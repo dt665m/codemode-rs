@@ -4,34 +4,29 @@ Rust port of CodeMode with an MCP-backed tool client and a V8 sandbox for runnin
 
 ## Quick Start (Media MCP)
 
-1) Start the Media MCP server:
+1) Run the example:
 
 ```bash
-cd ../media_mcp
-just local-temporal
-just dev-http
-```
-
-2) Run the example:
-
-```bash
-cargo run --example media_mcp_streamable_http
+cargo run --example mcp_streamable_http
 ```
 
 ## Minimal Example
 
-This is the simplest possible usage pattern: connect to an MCP server, refresh tools, run code.
+This is the simplest possible usage pattern: connect to an MCP server, refresh tools, run code, lifted straight from the example
 
 ```rust
-use std::sync::Arc;
-
 use codemode_rs::prelude::*;
 use rmcp::service::ServiceExt;
 
+const TEST_MCP_SERVER: &str = "https://mcpplaygroundonline.com/mcp-echo-server";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let transport =
-        rmcp::transport::StreamableHttpClientTransport::from_uri("http://localhost:3030/mcp");
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
+    let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(TEST_MCP_SERVER);
     let service = ().serve(transport).await?;
     let mcp = McpToolClient::new(service);
 
@@ -39,18 +34,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .sandbox(SandboxConfig::new(tokio::runtime::Handle::current()))
         .build()?;
     let mut client = CodeModeClient::new(config);
-    client.register_async_source(mcp.clone(), "media").await?;
+    client.register_async_source(mcp.clone(), "test").await?;
 
     let result = client
         .call_tool_chain(
-            "const [scores, news] = await Promise.all([\
-                media.get_live_scores({ sport: 'nfl' }),\
-                media.search_news({ query: 'nfl' })\
+            "const [echo1, echo2] = await Promise.all([\
+                test.echo({\"data\": \"Hello, MCP!\",\"message\": \"Echo1 message\",\"timestamp\": true}),\
+                test.echo({\"data\": \"Hello, MCP!\",\"message\": \"Echo2 message\",\"timestamp\": true})
             ]);\
-            return { scores, news };",
+            return { echo1, echo2 };",
         )
         .await?;
-    println!("{}", result.result);
+    tracing::info!("Result: {}", result.result);
+
     Ok(())
 }
 ```
