@@ -6,7 +6,10 @@ const TEST_MCP_SERVER: &str = "https://mcpplaygroundonline.com/mcp-echo-server";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
     let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(TEST_MCP_SERVER);
